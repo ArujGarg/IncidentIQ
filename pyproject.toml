@@ -1,0 +1,23 @@
+[project]
+name = "indicentiq"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "ArujGarg", email = "arujgarg04@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "prometheus-client>=0.26.0",
+    "structlog>=26.1.0",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+indicentiq = "indicentiq:main"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
