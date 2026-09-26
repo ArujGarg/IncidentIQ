@@ -5,9 +5,67 @@ import time
 
 import structlog
 from fastapi import FastAPI, Header
-from prometheus_client import Counter, Histogram, make_asgi_app
+from opentelemetry import metrics, trace
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+resource = Resource.create({"service.name": "payment_service"})
+
+provider = TracerProvider(resource=resource)
+
+exporter = OTLPSpanExporter(
+    endpoint="http://localhost:14317",
+    insecure=True,
+)
+
+provider.add_span_processor(BatchSpanProcessor(exporter))
+
+trace.set_tracer_provider(provider)
+
+metric_exporter = OTLPMetricExporter(
+    endpoint="http://localhost:14317",
+    insecure=True,
+)
+
+metric_reader = PeriodicExportingMetricReader(
+    metric_exporter,
+    export_interval_millis=5000,
+)
+
+meter_provider = MeterProvider(
+    resource=resource,
+    metric_readers=[metric_reader],
+)
+
+metrics.set_meter_provider(meter_provider)
+
+meter = metrics.get_meter("payment_service")
+
+payment_requests = meter.create_counter(
+    "payment_requests_total",
+    description="Total number of payment requests",
+)
+
+payment_failures = meter.create_counter(
+    "payment_failures_total",
+    description="Total number of payment failures",
+)
+
+payment_latency = meter.create_histogram(
+    "payment_request_duration_seconds",
+    unit="s",
+    description="Payment request duration in seconds",
+)
 
 app = FastAPI()
+
+FastAPIInstrumentor.instrument_app(app)
 
 file_handler = logging.FileHandler("payment_service.log")
 
@@ -29,38 +87,23 @@ structlog.configure(
     logger_factory=structlog.stdlib.LoggerFactory(),
     wrapper_class=structlog.stdlib.BoundLogger,
 )
-REQUEST_COUNT = Counter(
-    "payment_requests_total",
-    "Total payment requests",
-)
-
-FAILURE_COUNT = Counter(
-    "payment_failures_total",
-    "Total payment failures",
-)
-
-REQUEST_LATENCY = Histogram(
-    "payment_request_duration_seconds",
-    "Payment request latency",
-)
-
-app.mount("/metrics", make_asgi_app())
-
 
 logger = structlog.get_logger()
 
 
 @app.post("/payments")
 def process_payment(x_request_id: str | None = Header(default=None)):
-    REQUEST_COUNT.inc()
-    start = time.time()
+    payment_requests.add(1)
+
+    start = time.perf_counter()
 
     time.sleep(random.uniform(0.1, 0.3))
 
-    duration = time.time() - start
+    duration = time.perf_counter() - start
 
     if FAILURE_MODE:
-        FAILURE_COUNT.inc()
+        payment_failures.add(1)
+
         logger.error(
             "payment_failed",
             service="payment-service",
@@ -69,7 +112,8 @@ def process_payment(x_request_id: str | None = Header(default=None)):
             error="database connection timeout",
         )
 
-        REQUEST_LATENCY.observe(duration)
+        payment_latency.record(duration)
+
         return {
             "status": "failed",
             "error": "database connection timeout",
@@ -83,8 +127,12 @@ def process_payment(x_request_id: str | None = Header(default=None)):
         request_id=x_request_id,
     )
 
-    REQUEST_LATENCY.observe(duration)
-    return {"status": "success", "transaction_id": f"txn-{random.randint(1000, 9999)}"}
+    payment_latency.record(duration)
+
+    return {
+        "status": "success",
+        "transaction_id": f"txn-{random.randint(1000, 9999)}",
+    }
 
 
 app.get("/health")
