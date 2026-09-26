@@ -10,28 +10,30 @@ processors:
   batch:
 
 exporters:
-  otlp/jaeger:
-    # endpoint: jaeger:4317
-    endpoint: 172.18.0.2:4317
+  otlp_grpc/jaeger:
+    endpoint: incidentiq-jaeger:4317
     tls:
       insecure: true
 
   prometheus:
     endpoint: "0.0.0.0:8889"
 
+  otlp_http/loki:
+    endpoint: http://incidentiq-loki:3100/otlp
+
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/jaeger]
+      exporters: [otlp_grpc/jaeger]
 
     metrics:
       receivers: [otlp]
       processors: [batch]
       exporters: [prometheus]
 
-    # logs:
-    #   receivers: [otlp]
-    #   processors: [batch]
-    #   exporters: [debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/loki]

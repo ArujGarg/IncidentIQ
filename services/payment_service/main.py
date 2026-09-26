@@ -6,16 +6,55 @@ import time
 import structlog
 from fastapi import FastAPI, Header
 from opentelemetry import metrics, trace
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+
+class OTelLogFilter(logging.Filter):
+    def filter(self, record):
+        record.__dict__.pop("_logger", None)
+        record.__dict__.pop("_name", None)
+        return True
+
+
+logging.basicConfig(
+    format="%(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+    ],
+    level=logging.INFO,
+)
+
 resource = Resource.create({"service.name": "payment_service"})
+
+logger_provider = LoggerProvider(resource=resource)
+
+log_exporter = OTLPLogExporter(
+    endpoint="http://localhost:14317",
+    insecure=True,
+)
+
+logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+
+set_logger_provider(logger_provider)
+
+otel_logging_handler = LoggingHandler(
+    level=logging.INFO,
+    logger_provider=logger_provider,
+)
+
+otel_logging_handler.addFilter(OTelLogFilter())
+
+logging.getLogger().addHandler(otel_logging_handler)
 
 provider = TracerProvider(resource=resource)
 
@@ -64,19 +103,6 @@ payment_latency = meter.create_histogram(
 )
 
 app = FastAPI()
-
-FastAPIInstrumentor.instrument_app(app)
-
-file_handler = logging.FileHandler("payment_service.log")
-
-logging.basicConfig(
-    format="%(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("payment_service.log"),
-    ],
-    level=logging.INFO,
-)
 
 structlog.configure(
     processors=[
