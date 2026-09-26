@@ -1,0 +1,17 @@
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://host.docker.internal:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: payment_service
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          service: payment_service
+          __path__: /logs/payment_service.log
