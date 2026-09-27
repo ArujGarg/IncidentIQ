@@ -10,6 +10,7 @@ from opentelemetry._logs import set_logger_provider
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
@@ -104,10 +105,28 @@ payment_latency = meter.create_histogram(
 
 app = FastAPI()
 
+FastAPIInstrumentor.instrument_app(
+    app,
+    exclude_spans=["receive", "send"],
+)
+
+
+def add_trace_context(logger, method_name, event_dict):
+    span = trace.get_current_span()
+    context = span.get_span_context()
+
+    if context.is_valid:
+        event_dict["trace_id"] = format(context.trace_id, "032x")
+        event_dict["span_id"] = format(context.span_id, "016x")
+
+    return event_dict
+
+
 structlog.configure(
     processors=[
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.stdlib.add_log_level,
+        add_trace_context,
         structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
     ],
     logger_factory=structlog.stdlib.LoggerFactory(),
