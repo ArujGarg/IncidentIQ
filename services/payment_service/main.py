@@ -87,6 +87,8 @@ metrics.set_meter_provider(meter_provider)
 
 meter = metrics.get_meter("payment_service")
 
+tracer = trace.get_tracer("payment_service")
+
 payment_requests = meter.create_counter(
     "payment_requests_total",
     description="Total number of payment requests",
@@ -136,58 +138,87 @@ structlog.configure(
 logger = structlog.get_logger()
 
 
+def save_payment():
+    with tracer.start_as_current_span("db.save_payment") as span:
+        if DB_FAILURE_MODE:
+            time.sleep(2)
+            span.record_exception(Exception("database connection timeout"))
+            span.set_status(
+                trace.Status(
+                    trace.StatusCode.ERROR,
+                    "database connection timeout",
+                )
+            )
+            raise Exception("database connection timeout")
+
+        time.sleep(random.uniform(0.05, 0.15))
+        return True
+
+
 @app.post("/payments")
 def process_payment(x_request_id: str | None = Header(default=None)):
     payment_requests.add(1)
 
     start = time.perf_counter()
 
-    time.sleep(random.uniform(0.1, 0.3))
+    try:
+        time.sleep(random.uniform(0.1, 0.3))
 
-    duration = time.perf_counter() - start
+        if FAILURE_MODE:
+            payment_failures.add(1)
 
-    if FAILURE_MODE:
+            logger.error(
+                "payment_failed",
+                service="payment-service",
+                status=500,
+                request_id=x_request_id,
+                error="payment service failure",
+            )
+
+            return {
+                "status": "failed",
+                "error": "payment service failure",
+            }
+
+        save_payment()
+
+        logger.info(
+            "payment_processed",
+            service="payment_service",
+            status=200,
+            request_id=x_request_id,
+        )
+
+        return {
+            "status": "success",
+            "transaction_id": f"txn-{random.randint(1000, 9999)}",
+        }
+
+    except Exception as exc:
         payment_failures.add(1)
 
         logger.error(
             "payment_failed",
-            service="payment-service",
+            service="payment_service",
             status=500,
             request_id=x_request_id,
-            error="database connection timeout",
+            error=str(exc),
         )
 
+        raise
+
+    finally:
+        duration = time.perf_counter() - start
         payment_latency.record(duration)
 
-        return {
-            "status": "failed",
-            "error": "database connection timeout",
-        }
 
-    logger.info(
-        "payment_processed",
-        service="payment_service",
-        status=200,
-        duration=round(duration, 3),
-        request_id=x_request_id,
-    )
-
-    payment_latency.record(duration)
-
-    return {
-        "status": "success",
-        "transaction_id": f"txn-{random.randint(1000, 9999)}",
-    }
-
-
-app.get("/health")
-
-
+@app.get("/health")
 def health():
     return {"status": "ok"}
 
 
 FAILURE_MODE = False
+DB_FAILURE_MODE = False
 
 
 @app.post("/admin/failure")
@@ -195,3 +226,17 @@ def enable_failure():
     global FAILURE_MODE
     FAILURE_MODE = True
     return {"failure_mode": True}
+
+
+@app.post("/admin/db-failure")
+def enable_db_failure():
+    global DB_FAILURE_MODE
+    DB_FAILURE_MODE = True
+    return {"db_failure_mode": True}
+
+
+@app.post("/admin/db-recover")
+def recover_db():
+    global DB_FAILURE_MODE
+    DB_FAILURE_MODE = False
+    return {"db_failure_mode": False}
