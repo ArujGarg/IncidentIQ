@@ -1,13 +1,53 @@
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy.orm import Session
 
-from backend.database import get_db
+from backend.database import SessionLocal, get_db
+from backend.incident_detector import create_payment_incident_if_needed
 from backend.models import Incident
 from backend.schemas import IncidentCreate, IncidentResponse
 
-app = FastAPI(title="IncidentIQ")
+
+def run_detector_check():
+    db = SessionLocal()
+
+    try:
+        create_payment_incident_if_needed(db)
+    finally:
+        db.close()
+
+
+async def detector_loop():
+    while True:
+        try:
+            await asyncio.to_thread(run_detector_check)
+        except Exception as exc:
+            print(f"Detector error: {exc}")
+
+        await asyncio.sleep(10)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(detector_loop())
+
+    yield
+
+    task.cancel()
+
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(
+    title="IncidentIQ",
+    lifespan=lifespan,
+)
 
 
 @app.get("/health")
@@ -50,3 +90,11 @@ def get_incident(
         raise HTTPException(status_code=404, detail="Incident not found")
 
     return incident
+
+
+from backend.prometheus import query_prometheus
+
+
+@app.get("/test-prometheus")
+def test_prometheus():
+    return query_prometheus("increase(payment_failures_total[1m])")
