@@ -182,6 +182,9 @@ def process_payment(x_request_id: str | None = Header(default=None)):
 
         save_payment()
 
+        if LATENCY_MODE:
+            time.sleep(1.5)
+
         logger.info(
             "payment_processed",
             service="payment_service",
@@ -219,6 +222,7 @@ def health():
 
 FAILURE_MODE = False
 DB_FAILURE_MODE = False
+LATENCY_MODE = False
 
 
 @app.post("/admin/failure")
@@ -240,3 +244,17 @@ def recover_db():
     global DB_FAILURE_MODE
     DB_FAILURE_MODE = False
     return {"db_failure_mode": False}
+
+
+@app.post("/admin/latency")
+def enable_latency():
+    global LATENCY_MODE
+    LATENCY_MODE = True
+    return {"latency_mode": True}
+
+
+@app.post("/admin/latency-recover")
+def recover_latency():
+    global LATENCY_MODE
+    LATENCY_MODE = False
+    return {"latency_mode": False}

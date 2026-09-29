@@ -6,16 +6,25 @@ from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.database import SessionLocal, get_db
-from backend.incident_detector import create_payment_incident_if_needed
+from backend.incident_detector import (
+    create_database_incident_if_needed,
+    create_high_latency_incident_if_needed,
+    create_payment_incident_if_needed,
+)
 from backend.models import Incident
 from backend.schemas import IncidentCreate, IncidentResponse
 
 
 def run_detector_check():
     db = SessionLocal()
-
     try:
-        create_payment_incident_if_needed(db)
+        payment_incident = create_payment_incident_if_needed(db)
+        database_incident = create_database_incident_if_needed(db)
+        latency_incident = create_high_latency_incident_if_needed(db)
+
+        print("Payment detector:", payment_incident)
+        print("Database detector:", database_incident)
+        print("Latency detector:", latency_incident)
     finally:
         db.close()
 
