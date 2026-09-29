@@ -3,6 +3,7 @@ import random
 import sys
 import time
 
+import httpx
 import structlog
 from fastapi import FastAPI, Header
 from opentelemetry import metrics, trace
@@ -162,7 +163,26 @@ def process_payment(x_request_id: str | None = Header(default=None)):
     start = time.perf_counter()
 
     try:
-        time.sleep(random.uniform(0.1, 0.3))
+        processing_time = random.uniform(0.1, 0.3)
+
+        if processing_time > PAYMENT_TIMEOUT:
+            payment_failures.add(1)
+
+            logger.error(
+                "payment_failed",
+                service="payment_service",
+                status=500,
+                request_id=x_request_id,
+                error="payment processing timeout",
+                deployment_version=DEPLOYMENT_VERSION,
+            )
+
+            return {
+                "status": "failed",
+                "error": "payment processing timeout",
+            }
+
+        time.sleep(processing_time)
 
         if FAILURE_MODE:
             payment_failures.add(1)
@@ -223,6 +243,9 @@ def health():
 FAILURE_MODE = False
 DB_FAILURE_MODE = False
 LATENCY_MODE = False
+DEPLOYMENT_VERSION = "v1"
+PAYMENT_TIMEOUT = 2.0
+LAST_DEPLOYMENT = None
 
 
 @app.post("/admin/failure")
@@ -258,3 +281,45 @@ def recover_latency():
     global LATENCY_MODE
     LATENCY_MODE = False
     return {"latency_mode": False}
+
+
+@app.post("/admin/deploy-bad-config")
+def deploy_bad_config():
+    global DEPLOYMENT_VERSION, PAYMENT_TIMEOUT
+
+    DEPLOYMENT_VERSION = "v2"
+    PAYMENT_TIMEOUT = 0.01
+
+    httpx.post(
+        "http://localhost:8002/deployments",
+        params={
+            "service": "payment_service",
+            "previous_version": "v1",
+            "version": "v2",
+            "configuration_change": ("payment timeout changed from 2.0s to 0.01s"),
+        },
+        timeout=5.0,
+    )
+
+    return {
+        "deployment_version": DEPLOYMENT_VERSION,
+        "payment_timeout": PAYMENT_TIMEOUT,
+    }
+
+
+@app.post("/admin/deploy-recover")
+def recover_deployment():
+    global DEPLOYMENT_VERSION, PAYMENT_TIMEOUT
+
+    DEPLOYMENT_VERSION = "v1"
+    PAYMENT_TIMEOUT = 2.0
+
+    return {
+        "deployment_version": DEPLOYMENT_VERSION,
+        "payment_timeout": PAYMENT_TIMEOUT,
+    }
+
+
+@app.get("/deployment")
+def get_deployment():
+    return LAST_DEPLOYMENT

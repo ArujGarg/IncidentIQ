@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.database import SessionLocal, get_db
+from backend.deployments import get_deployments, record_deployment
 from backend.incident_detector import (
     create_database_incident_if_needed,
     create_high_latency_incident_if_needed,
@@ -110,3 +111,23 @@ from backend.prometheus import query_prometheus
 @app.get("/test-prometheus")
 def test_prometheus():
     return query_prometheus("increase(payment_failures_total[1m])")
+
+
+@app.post("/deployments")
+def create_deployment(
+    service: str,
+    previous_version: str,
+    version: str,
+    configuration_change: str,
+):
+    return record_deployment(
+        service=service,
+        previous_version=previous_version,
+        version=version,
+        configuration_change=configuration_change,
+    )
+
+
+@app.get("/deployments")
+def list_deployments(service: str | None = None):
+    return get_deployments(service)
