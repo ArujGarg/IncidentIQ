@@ -27,6 +27,13 @@ HIGH_LATENCY_SERVICE = {
     "severity": "warning",
 }
 
+INVENTORY_DEPENDENCY = {
+    "name": "inventory_service",
+    "failure_metric": "inventory_dependency_failures_total",
+    "failure_threshold": 3,
+    "severity": "critical",
+}
+
 
 def detect_payment_incident() -> bool:
     query = f"increase({PAYMENT_SERVICE['failure_metric']}[1m])"
@@ -167,4 +174,31 @@ def create_high_latency_incident_if_needed(db: Session) -> Incident | None:
         service=service,
         severity=HIGH_LATENCY_SERVICE["severity"],
         detected=detect_high_latency(),
+    )
+
+
+def detect_inventory_dependency_incident() -> bool:
+    query = f"increase({INVENTORY_DEPENDENCY['failure_metric']}[1m])"
+
+    result = query_prometheus(query)
+    results = result["data"]["result"]
+
+    if not results:
+        return False
+
+    failures = float(results[0]["value"][1])
+
+    print("Inventory dependency failures:", failures)
+
+    return failures >= INVENTORY_DEPENDENCY["failure_threshold"]
+
+
+def create_inventory_dependency_incident_if_needed(
+    db: Session,
+) -> Incident | None:
+    return create_incident_if_needed(
+        db=db,
+        service=INVENTORY_DEPENDENCY["name"],
+        severity=INVENTORY_DEPENDENCY["severity"],
+        detected=detect_inventory_dependency_incident(),
     )

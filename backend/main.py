@@ -9,6 +9,7 @@ from backend.database import SessionLocal, get_db
 from backend.incident_detector import (
     create_database_incident_if_needed,
     create_high_latency_incident_if_needed,
+    create_inventory_dependency_incident_if_needed,
     create_payment_incident_if_needed,
 )
 from backend.models import Incident
@@ -21,10 +22,12 @@ def run_detector_check():
         payment_incident = create_payment_incident_if_needed(db)
         database_incident = create_database_incident_if_needed(db)
         latency_incident = create_high_latency_incident_if_needed(db)
+        inventory_incident = create_inventory_dependency_incident_if_needed(db)
 
         print("Payment detector:", payment_incident)
         print("Database detector:", database_incident)
         print("Latency detector:", latency_incident)
+        print("Inventory detector:", inventory_incident)
     finally:
         db.close()
 

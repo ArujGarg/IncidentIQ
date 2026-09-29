@@ -51,6 +51,17 @@ def get_orders():
     time.sleep(random.uniform(0.05, 0.2))
 
     request_id = str(uuid.uuid4())
+
+    inventory_response = httpx.get(
+        "http://localhost:8003/inventory/item-123",
+        headers={
+            "X-Request-ID": request_id,
+        },
+        timeout=2.0,
+    )
+
+    inventory_response.raise_for_status()
+
     payment_response = httpx.post(
         "http://localhost:8001/payments", headers={"X-Request-ID": request_id}
     )
