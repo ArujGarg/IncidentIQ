@@ -1,35 +1,39 @@
 from datetime import UTC, datetime
-from uuid import uuid4
 
-deployments = []
+from sqlalchemy.orm import Session
+
+from backend.models import Deployment
 
 
 def record_deployment(
+    db: Session,
     service: str,
     previous_version: str,
     version: str,
     configuration_change: str,
-):
-    deployment = {
-        "deployment_id": str(uuid4()),
-        "service": service,
-        "previous_version": previous_version,
-        "version": version,
-        "configuration_change": configuration_change,
-        "timestamp": datetime.now(UTC),
-    }
+) -> Deployment:
+    deployment = Deployment(
+        service=service,
+        previous_version=previous_version,
+        version=version,
+        configuration_change=configuration_change,
+        deployed_at=datetime.now(UTC),
+    )
 
-    deployments.append(deployment)
+    db.add(deployment)
+    db.commit()
+    db.refresh(deployment)
 
     return deployment
 
 
 def get_deployments(
+    db: Session,
     service: str | None = None,
-):
-    if service is None:
-        return deployments
+) -> list[Deployment]:
+    query = db.query(Deployment)
 
-    return [
-        deployment for deployment in deployments if deployment["service"] == service
-    ]
+    if service is not None:
+        query = query.filter(Deployment.service == service)
+
+    return query.order_by(Deployment.deployed_at.desc()).all()

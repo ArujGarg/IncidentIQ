@@ -19,3 +19,14 @@ class Incident(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     trigger: Mapped[str | None] = mapped_column(String(50), nullable=True)
     observed_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class Deployment(Base):
+    __tablename__ = "deployments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service: Mapped[str] = mapped_column(String(100), index=True)
+    previous_version: Mapped[str] = mapped_column(String(50))
+    version: Mapped[str] = mapped_column(String(50))
+    configuration_change: Mapped[str] = mapped_column(String(500))
+    deployed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

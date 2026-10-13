@@ -14,7 +14,7 @@ from backend.incident_detector import (
     create_payment_incident_if_needed,
 )
 from backend.models import Incident
-from backend.schemas import IncidentCreate, IncidentResponse
+from backend.schemas import DeploymentResponse, IncidentCreate, IncidentResponse
 
 
 def run_detector_check():
@@ -135,14 +135,16 @@ def test_prometheus():
     return query_prometheus("increase(payment_failures_total[1m])")
 
 
-@app.post("/deployments")
+@app.post("/deployments", response_model=DeploymentResponse)
 def create_deployment(
     service: str,
     previous_version: str,
     version: str,
     configuration_change: str,
+    db: Session = Depends(get_db),
 ):
     return record_deployment(
+        db=db,
         service=service,
         previous_version=previous_version,
         version=version,
@@ -150,6 +152,9 @@ def create_deployment(
     )
 
 
-@app.get("/deployments")
-def list_deployments(service: str | None = None):
-    return get_deployments(service)
+@app.get("/deployments", response_model=list[DeploymentResponse])
+def list_deployments(
+    service: str | None = None,
+    db: Session = Depends(get_db),
+):
+    return get_deployments(db, service)

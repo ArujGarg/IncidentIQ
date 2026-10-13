@@ -20,7 +20,7 @@ traffic_generator.py ──GET /orders──► Order API :8000
                               IncidentIQ Backend :8002 (FastAPI) ◄───────────────────────┘
                               ├─ detector loop (every 10s, 4 detectors)
                               ├─ incidents → Postgres + pgvector :5432
-                              └─ deployments → in-memory list (lost on restart)
+                              └─ deployments → Postgres (survives restart)
 
 Not built: investigation tools → LangGraph agent → RAG (pgvector + BM25 + reranker)
            → evidence-grounded report → evaluation → Next.js UI
@@ -44,7 +44,7 @@ Not built: investigation tools → LangGraph agent → RAG (pgvector + BM25 + re
 | Scenarios: payment failure, high latency, bad deploy | Unverified | Blocked by the open `payment_service` incident. Payment `FAILURE_MODE` has no recover endpoint. |
 | Incident API (`POST/GET /incidents`, `GET /incidents/{id}`, `PATCH /incidents/{id}/resolve`) | Verified | Incidents record `trigger` and `observed_value`. Resolve returns 404/409 for unknown/already-resolved. No `/timeline`, no `/investigate`. |
 | Detection loop | Verified (partial) | Dedup is by service only (one open incident per service). Resolve is manual; no automatic resolution yet. `trigger` shows which signal crossed its threshold *first*, which is timing-dependent, not the root cause. |
-| Deployment records | Partial | `backend/deployments.py` keeps them in a Python list. Not persisted. |
+| Deployment records | Verified | `Deployment` table in Postgres; `POST/GET /deployments` (optional `service` filter) survive a backend restart. |
 | pgvector | Available, not installed | `CREATE EXTENSION vector` has not been run. |
 | Grafana | Container only | No data sources or dashboards. |
 | Metrics tool | Stub (uncommitted) | `backend/tools/metrics.py` accepts raw PromQL. It has no summary and no tests. |
@@ -69,7 +69,7 @@ Not built: investigation tools → LangGraph agent → RAG (pgvector + BM25 + re
 
 **Step 3 — Evidence hardening (before tools)**
 1. ~~Incident lifecycle: resolve endpoint and `trigger` field~~ Done 2026-10-13.
-2. Persist deployments in Postgres (a `Deployment` model).
+2. ~~Persist deployments in Postgres~~ Done 2026-10-13.
 3. Set span status ERROR and return 5xx in the payment failure and bad-deploy branches.
 4. Add a payment `/admin/recover` endpoint and fix the service label typo.
 5. Add an OTel View with second-scale histogram buckets.
@@ -93,4 +93,4 @@ Not built: investigation tools → LangGraph agent → RAG (pgvector + BM25 + re
 
 ## Exact next step
 
-Step 3.2: **persist deployments in Postgres.** Add a `Deployment` model (`service`, `previous_version`, `version`, `configuration_change`, `timestamp` with timezone), make `record_deployment`/`get_deployments` in `backend/deployments.py` use a DB session, and update the `/deployments` routes in `backend/main.py`. The `deployments` table is new, so `create_all` creates it without dropping anything. Verify by posting a deployment, restarting the backend, and confirming `GET /deployments` still returns it.
+Step 3.3: **make payment failures visible in traces.** In `services/payment_service/main.py`, the `FAILURE_MODE` and bad-deploy (`PAYMENT_TIMEOUT`) branches return HTTP 200 and never mark the span as ERROR, so Jaeger carries no evidence for those scenarios. Record the exception and set the span status to ERROR in both branches (and return a 5xx), then verify in Jaeger that the failing trace is flagged `error=true`.
