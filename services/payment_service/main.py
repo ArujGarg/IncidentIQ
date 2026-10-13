@@ -5,7 +5,7 @@ import time
 
 import httpx
 import structlog
-from fastapi import FastAPI, Header
+from fastapi import FastAPI, Header, HTTPException
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
@@ -156,6 +156,14 @@ def save_payment():
         return True
 
 
+def fail_request(message: str):
+    span = trace.get_current_span()
+    span.record_exception(Exception(message))
+    span.set_status(trace.Status(trace.StatusCode.ERROR, message))
+
+    raise HTTPException(status_code=500, detail=message)
+
+
 @app.post("/payments")
 def process_payment(x_request_id: str | None = Header(default=None)):
     payment_requests.add(1)
@@ -177,10 +185,7 @@ def process_payment(x_request_id: str | None = Header(default=None)):
                 deployment_version=DEPLOYMENT_VERSION,
             )
 
-            return {
-                "status": "failed",
-                "error": "payment processing timeout",
-            }
+            fail_request("payment processing timeout")
 
         time.sleep(processing_time)
 
@@ -189,16 +194,13 @@ def process_payment(x_request_id: str | None = Header(default=None)):
 
             logger.error(
                 "payment_failed",
-                service="payment-service",
+                service="payment_service",
                 status=500,
                 request_id=x_request_id,
                 error="payment service failure",
             )
 
-            return {
-                "status": "failed",
-                "error": "payment service failure",
-            }
+            fail_request("payment service failure")
 
         save_payment()
 
@@ -216,6 +218,9 @@ def process_payment(x_request_id: str | None = Header(default=None)):
             "status": "success",
             "transaction_id": f"txn-{random.randint(1000, 9999)}",
         }
+
+    except HTTPException:
+        raise
 
     except Exception as exc:
         payment_failures.add(1)
@@ -253,6 +258,13 @@ def enable_failure():
     global FAILURE_MODE
     FAILURE_MODE = True
     return {"failure_mode": True}
+
+
+@app.post("/admin/recover")
+def recover_failure():
+    global FAILURE_MODE
+    FAILURE_MODE = False
+    return {"failure_mode": False}
 
 
 @app.post("/admin/db-failure")

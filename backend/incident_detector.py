@@ -43,7 +43,7 @@ class Detection:
 
 
 def detect_payment_incident() -> Detection:
-    query = f"increase({PAYMENT_SERVICE['failure_metric']}[1m])"
+    query = f"sum(increase({PAYMENT_SERVICE['failure_metric']}[1m]))"
 
     result = query_prometheus(query)
 
@@ -150,9 +150,9 @@ def create_database_incident_if_needed(db: Session) -> Incident | None:
 
 def detect_high_latency() -> Detection:
     query = (
-        "rate(payment_request_duration_seconds_sum[1m]) "
+        "sum(rate(payment_request_duration_seconds_sum[1m])) "
         "/ "
-        "rate(payment_request_duration_seconds_count[1m])"
+        "sum(rate(payment_request_duration_seconds_count[1m]))"
     )
 
     result = query_prometheus(query)
@@ -182,7 +182,7 @@ def create_high_latency_incident_if_needed(db: Session) -> Incident | None:
 
 
 def detect_inventory_dependency_incident() -> Detection:
-    query = f"increase({INVENTORY_DEPENDENCY['failure_metric']}[1m])"
+    query = f"sum(increase({INVENTORY_DEPENDENCY['failure_metric']}[1m]))"
 
     result = query_prometheus(query)
     results = result["data"]["result"]

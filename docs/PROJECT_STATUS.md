@@ -41,7 +41,7 @@ Not built: investigation tools → LangGraph agent → RAG (pgvector + BM25 + re
 | Order API / Inventory logs | Missing | Order API logs go to stdout only. Inventory has no logging. Order API crashes without logging when Inventory returns 503. |
 | Scenario: DB timeout (`/admin/db-failure`) | Verified | Detected, but recorded by the *payment-failure* detector (see the dedup issue below). |
 | Scenario: dependency unavailable (inventory `/admin/failure`) | Verified | Creates an `inventory_service` incident. |
-| Scenarios: payment failure, high latency, bad deploy | Unverified | Blocked by the open `payment_service` incident. Payment `FAILURE_MODE` has no recover endpoint. |
+| Scenarios: payment failure, high latency | Verified | Payment failure (`/admin/failure`, now with `/admin/recover`) and high latency each opened an incident with the right trigger. Bad deploy: returns 500 with ERROR spans and records a deployment, but its incident/investigation has not been exercised end to end. |
 | Incident API (`POST/GET /incidents`, `GET /incidents/{id}`, `PATCH /incidents/{id}/resolve`) | Verified | Incidents record `trigger` and `observed_value`. Resolve returns 404/409 for unknown/already-resolved. No `/timeline`, no `/investigate`. |
 | Detection loop | Verified (partial) | Dedup is by service only (one open incident per service). Resolve is manual; no automatic resolution yet. `trigger` shows which signal crossed its threshold *first*, which is timing-dependent, not the root cause. |
 | Deployment records | Verified | `Deployment` table in Postgres; `POST/GET /deployments` (optional `service` filter) survive a backend restart. |
@@ -59,8 +59,9 @@ Not built: investigation tools → LangGraph agent → RAG (pgvector + BM25 + re
 1. ~~Incidents are never resolved~~ Fixed: manual `PATCH /incidents/{id}/resolve`. Automatic resolution is still not implemented.
 2. ~~Incidents don't record the detector~~ Fixed: `trigger` and `observed_value` columns.
 3. The histogram uses the OTel default buckets (`0, 5, 10 … 10000`), which are millisecond-scale, but it records seconds. p95 is therefore meaningless.
-4. The payment failure and bad-deploy branches return HTTP 200 and don't mark the span ERROR, so traces carry no evidence for these failures.
-5. Payment `FAILURE_MODE` has no `/admin/recover`. One log line uses `service="payment-service"` (hyphen). `LAST_DEPLOYMENT` is never set.
+4. ~~Payment failure and bad-deploy branches returned 200 with no ERROR span~~ Fixed: they return 500, record the exception and set span status ERROR.
+6. ~~Prometheus detectors read only the first series (`results[0]`), so after a service restart they could read a stale series and miss live failures~~ Fixed: queries now `sum(...)` across series.
+5. ~~Payment `FAILURE_MODE` had no recover endpoint; label typo~~ Fixed (`/admin/recover`). `LAST_DEPLOYMENT` is still never set.
 6. If the backend is down, `/admin/deploy-bad-config` applies the bad config but fails to record the deployment.
 7. Timestamps use `DateTime` without timezone. Config values (DB URL, service URLs) are hardcoded.
 8. `docker/promtail/` is dead config (replaced by OTLP logs). Jaeger also exposes host port 4317, which bypasses the Collector.
@@ -70,8 +71,8 @@ Not built: investigation tools → LangGraph agent → RAG (pgvector + BM25 + re
 **Step 3 — Evidence hardening (before tools)**
 1. ~~Incident lifecycle: resolve endpoint and `trigger` field~~ Done 2026-10-13.
 2. ~~Persist deployments in Postgres~~ Done 2026-10-13.
-3. Set span status ERROR and return 5xx in the payment failure and bad-deploy branches.
-4. Add a payment `/admin/recover` endpoint and fix the service label typo.
+3. ~~Set span status ERROR and return 5xx in the payment failure and bad-deploy branches~~ Done 2026-10-13.
+4. ~~Add a payment `/admin/recover` endpoint and fix the service label typo~~ Done 2026-10-13.
 5. Add an OTel View with second-scale histogram buckets.
 6. Send Order API and Inventory logs via OTLP, and log the inventory failure in Order API.
 
@@ -93,4 +94,4 @@ Not built: investigation tools → LangGraph agent → RAG (pgvector + BM25 + re
 
 ## Exact next step
 
-Step 3.3: **make payment failures visible in traces.** In `services/payment_service/main.py`, the `FAILURE_MODE` and bad-deploy (`PAYMENT_TIMEOUT`) branches return HTTP 200 and never mark the span as ERROR, so Jaeger carries no evidence for those scenarios. Record the exception and set the span status to ERROR in both branches (and return a 5xx), then verify in Jaeger that the failing trace is flagged `error=true`.
+Step 3.5: **second-scale histogram buckets.** The OTel default buckets (`0, 5, 10 … 10000`) are millisecond-scale but `payment_request_duration_seconds` records seconds, so p95 is meaningless. Add an OTel `View` in `services/payment_service/main.py` with an `ExplicitBucketHistogramAggregation` for that instrument (e.g. `0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10`), restart the service, and verify `histogram_quantile(0.95, sum by (le) (rate(payment_request_duration_seconds_bucket[1m])))` returns a sensible value. Then Step 3.6: send Order API and Inventory logs through OTLP.
