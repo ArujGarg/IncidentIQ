@@ -1,0 +1,87 @@
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: incidentiq-postgres
+    environment:
+      POSTGRES_USER: incidentiq
+      POSTGRES_PASSWORD: incidentiq
+      POSTGRES_DB: incidentiq
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - incidentiq
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: incidentiq-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - incidentiq
+
+  loki:
+    image: grafana/loki:latest
+    container_name: incidentiq-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./docker/loki/loki-config.yml:/etc/loki/local-config.yaml
+    command:
+      - "-config.file=/etc/loki/local-config.yaml"
+    networks:
+      - incidentiq
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: incidentiq-jaeger
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+    command:
+      - "--collector.otlp.enabled=true"
+    networks:
+      - incidentiq
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: incidentiq-otel-collector
+    ports:
+      - "14317:4317"
+      - "14318:4318"
+      - "8889:8889"
+    volumes:
+      - ./docker/otel/otel-collector-config.yml:/etc/otelcol-contrib/config.yml
+    command:
+      - "--config=/etc/otelcol-contrib/config.yml"
+    depends_on:
+      - jaeger
+      - loki
+    networks:
+      - incidentiq
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: incidentiq-grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - incidentiq
+
+volumes:
+  postgres_data:
+  grafana_data:
+
+networks:
+  incidentiq:
+    driver: bridge
