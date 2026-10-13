@@ -1,4 +1,5 @@
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
@@ -35,7 +36,13 @@ INVENTORY_DEPENDENCY = {
 }
 
 
-def detect_payment_incident() -> bool:
+@dataclass
+class Detection:
+    fired: bool
+    value: float | None = None
+
+
+def detect_payment_incident() -> Detection:
     query = f"increase({PAYMENT_SERVICE['failure_metric']}[1m])"
 
     result = query_prometheus(query)
@@ -43,11 +50,14 @@ def detect_payment_incident() -> bool:
     results = result["data"]["result"]
 
     if not results:
-        return False
+        return Detection(fired=False)
 
     failures = float(results[0]["value"][1])
 
-    return failures >= PAYMENT_SERVICE["failure_threshold"]
+    return Detection(
+        fired=failures >= PAYMENT_SERVICE["failure_threshold"],
+        value=failures,
+    )
 
 
 def has_open_incident(db: Session, service: str) -> bool:
@@ -63,30 +73,7 @@ def has_open_incident(db: Session, service: str) -> bool:
     return incident is not None
 
 
-def create_payment_incident_if_needed(db: Session) -> Incident | None:
-    service = PAYMENT_SERVICE["name"]
-
-    if not detect_payment_incident():
-        return None
-
-    if has_open_incident(db, service):
-        return None
-
-    incident = Incident(
-        severity=PAYMENT_SERVICE["severity"],
-        status="open",
-        affected_service=service,
-        started_at=datetime.now(UTC),
-    )
-
-    db.add(incident)
-    db.commit()
-    db.refresh(incident)
-
-    return incident
-
-
-def detect_database_incident() -> bool:
+def detect_database_incident() -> Detection:
     query = (
         f'{{service_name="{DB_SERVICE["name"]}"}} |= "{DB_SERVICE["error_message"]}"'
     )
@@ -106,16 +93,20 @@ def detect_database_incident() -> bool:
 
     print("DB timeouts detected:", timeout_count)
 
-    return timeout_count >= DB_SERVICE["failure_threshold"]
+    return Detection(
+        fired=timeout_count >= DB_SERVICE["failure_threshold"],
+        value=float(timeout_count),
+    )
 
 
 def create_incident_if_needed(
     db: Session,
     service: str,
     severity: str,
-    detected: bool,
+    trigger: str,
+    detection: Detection,
 ) -> Incident | None:
-    if not detected:
+    if not detection.fired:
         return None
 
     if has_open_incident(db, service):
@@ -126,6 +117,8 @@ def create_incident_if_needed(
         status="open",
         affected_service=service,
         started_at=datetime.now(UTC),
+        trigger=trigger,
+        observed_value=detection.value,
     )
 
     db.add(incident)
@@ -135,18 +128,27 @@ def create_incident_if_needed(
     return incident
 
 
-def create_database_incident_if_needed(db: Session) -> Incident | None:
-    service = DB_SERVICE["name"]
-
+def create_payment_incident_if_needed(db: Session) -> Incident | None:
     return create_incident_if_needed(
         db=db,
-        service=service,
-        severity=DB_SERVICE["severity"],
-        detected=detect_database_incident(),
+        service=PAYMENT_SERVICE["name"],
+        severity=PAYMENT_SERVICE["severity"],
+        trigger="payment_failures",
+        detection=detect_payment_incident(),
     )
 
 
-def detect_high_latency() -> bool:
+def create_database_incident_if_needed(db: Session) -> Incident | None:
+    return create_incident_if_needed(
+        db=db,
+        service=DB_SERVICE["name"],
+        severity=DB_SERVICE["severity"],
+        trigger="db_timeouts",
+        detection=detect_database_incident(),
+    )
+
+
+def detect_high_latency() -> Detection:
     query = (
         "rate(payment_request_duration_seconds_sum[1m]) "
         "/ "
@@ -157,40 +159,45 @@ def detect_high_latency() -> bool:
     results = result["data"]["result"]
 
     if not results:
-        return False
+        return Detection(fired=False)
 
     average_latency = float(results[0]["value"][1])
 
     print("Average latency:", average_latency)
 
-    return average_latency >= HIGH_LATENCY_SERVICE["threshold"]
-
-
-def create_high_latency_incident_if_needed(db: Session) -> Incident | None:
-    service = HIGH_LATENCY_SERVICE["name"]
-
-    return create_incident_if_needed(
-        db=db,
-        service=service,
-        severity=HIGH_LATENCY_SERVICE["severity"],
-        detected=detect_high_latency(),
+    return Detection(
+        fired=average_latency >= HIGH_LATENCY_SERVICE["threshold"],
+        value=average_latency,
     )
 
 
-def detect_inventory_dependency_incident() -> bool:
+def create_high_latency_incident_if_needed(db: Session) -> Incident | None:
+    return create_incident_if_needed(
+        db=db,
+        service=HIGH_LATENCY_SERVICE["name"],
+        severity=HIGH_LATENCY_SERVICE["severity"],
+        trigger="high_latency",
+        detection=detect_high_latency(),
+    )
+
+
+def detect_inventory_dependency_incident() -> Detection:
     query = f"increase({INVENTORY_DEPENDENCY['failure_metric']}[1m])"
 
     result = query_prometheus(query)
     results = result["data"]["result"]
 
     if not results:
-        return False
+        return Detection(fired=False)
 
     failures = float(results[0]["value"][1])
 
     print("Inventory dependency failures:", failures)
 
-    return failures >= INVENTORY_DEPENDENCY["failure_threshold"]
+    return Detection(
+        fired=failures >= INVENTORY_DEPENDENCY["failure_threshold"],
+        value=failures,
+    )
 
 
 def create_inventory_dependency_incident_if_needed(
@@ -200,5 +207,6 @@ def create_inventory_dependency_incident_if_needed(
         db=db,
         service=INVENTORY_DEPENDENCY["name"],
         severity=INVENTORY_DEPENDENCY["severity"],
-        detected=detect_inventory_dependency_incident(),
+        trigger="inventory_dependency_failures",
+        detection=detect_inventory_dependency_incident(),
     )

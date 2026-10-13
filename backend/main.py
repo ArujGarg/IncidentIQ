@@ -105,6 +105,28 @@ def get_incident(
     return incident
 
 
+@app.patch("/incidents/{incident_id}/resolve", response_model=IncidentResponse)
+def resolve_incident(
+    incident_id: int,
+    db: Session = Depends(get_db),
+):
+    incident = db.query(Incident).filter(Incident.id == incident_id).first()
+
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    if incident.status == "resolved":
+        raise HTTPException(status_code=409, detail="Incident already resolved")
+
+    incident.status = "resolved"
+    incident.ended_at = datetime.now(UTC)
+
+    db.commit()
+    db.refresh(incident)
+
+    return incident
+
+
 from backend.prometheus import query_prometheus
 
 

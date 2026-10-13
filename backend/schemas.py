@@ -16,5 +16,7 @@ class IncidentResponse(BaseModel):
     affected_service: str
     started_at: datetime
     ended_at: datetime | None
+    trigger: str | None
+    observed_value: float | None
 
     model_config = ConfigDict(from_attributes=True)

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, String
+from sqlalchemy import DateTime, Float, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -17,3 +17,5 @@ class Incident(Base):
     affected_service: Mapped[str] = mapped_column(String(100))
     started_at: Mapped[datetime] = mapped_column(DateTime)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    trigger: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    observed_value: Mapped[float | None] = mapped_column(Float, nullable=True)
